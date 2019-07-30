@@ -1,0 +1,154 @@
+version: '3'
+
+services:
+
+  omero-db:
+    image: postgres:9.6.12-alpine
+    networks:
+      promort_env:
+        aliases:
+          - ome-pg-server
+    environment:
+      - POSTGRES_DB=omero
+      - POSTGRES_USER=omero
+      - POSTGRES_PASSWORD=omero
+    volumes:
+      - ome-pg-data:/var/lib/postgresql/data
+
+  redis-server:
+    image: redis:5.0.5-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    networks:
+      promort_env:
+        aliases:
+          - redis-server
+    volumes:
+      - redis-data:/data
+
+  omero-server:
+    image: openmicroscopy/omero-server:5.4.10
+    depends_on:
+      - omero-db
+    networks:
+      promort_env:
+        aliases:
+          - omero-server
+    ports:
+      - "4063:4063"
+      - "4064:4064"
+    environment:
+      - ROOTPASS=omero
+      - CONFIG_omero_db_host=ome-pg-server
+      - CONFIG_omero_db_user=omero
+      - CONFIG_omero_db_pass=omero
+      - CONFIG_omero_db_name=omero
+    volumes:
+      - ome-data-dir:/OMERO
+      - ome-server-var:/opt/omero/server/OMERO.server/var
+
+  ome_seadragon-web:
+    image: crs4/ome_seadragon-web:0.6.13-ome5.4.10
+    depends_on:
+      - omero-server
+      - redis-server
+    entrypoint: ['/usr/local/bin/wait-for-it.sh', 'redis-server:6379', '--',
+                 '/usr/local/bin/wait-for-it.sh', 'omero-server:4063', '--timeout=600', '--strict', '--',
+                 '/usr/local/bin/wait-for-it.sh', 'omero-server:4064', '--timeout=600', '--strict', '--',
+                 '/usr/local/bin/entrypoint.sh']
+    networks:
+      promort_env:
+        aliases:
+          - ome_seadragon-web
+    environment:
+      ROOTPASS: omero
+      OMEROHOST: omero-server
+      REDISHOST: redis-server
+      IMAGES_REPOSITORY: /OMERO/
+      GW_USER_NAME: ome_gw
+      GW_USER_PASS: omero
+    volumes:
+      - ome-data-dir:/OMERO
+
+  ome_seadragon-nginx:
+    image: crs4/ome_seadragon-nginx:0.6.13-ome5.4.10
+    depends_on:
+      - ome_seadragon-web
+      - nginx-proxy
+    entrypoint: ['/usr/local/bin/wait-for-it.sh', 'ome_seadragon-web:4080', '--timeout=600', '--strict', '--',
+                 '/usr/local/bin/entrypoint.sh']
+    networks:
+      promort_env:
+        aliases:
+          - ome_seadragon-nginx
+          - ome-seadragon.local
+    environment:
+      - OMEROWEBHOST=ome_seadragon-web
+      - VIRTUAL_HOST=ome-seadragon.local
+
+  promort-db:
+    image: postgres:9.6.12-alpine
+    networks:
+      promort_env:
+        aliases:
+          - promort-db
+    environment:
+      - POSTGRES_DB=promort
+      - POSTGRES_USER=promort
+      - POSTGRES_PASSWORD=promort
+    volumes:
+      - promort-pg-data:/var/lib/postgresql/data
+
+  promort-web:
+    image: crs4/promort-web:develop
+    build: ../../promort-docker/
+    depends_on: 
+      - promort-db
+    entrypoint: ['/usr/local/bin/wait-for-it.sh', 'promort-db:5432', '--',
+                 '/usr/local/bin/wait-for-it.sh', 'ome_seadragon-nginx:80', '--timeout=600', '--strict', '--',
+                 '/usr/local/bin/entrypoint.sh']
+    networks:
+      promort_env:
+        aliases:
+          - promort-web
+    environment:
+      - DJANGO_CONFIG_FILE=/opt/django/conf/config.yaml
+    volumes:
+      - ./promort_config/:/opt/django/conf/
+
+  promort-nginx:
+    image: crs4/promort-nginx
+    build: ../../promort-nginx-docker
+    depends_on:
+      - promort-web
+      - nginx-proxy
+    entrypoint: ['/usr/local/bin/wait-for-it.sh', 'promort-web:8080', '--timeout=600', '--strict', '--',
+                 '/usr/local/bin/entrypoint.sh']
+    networks:
+      promort_env:
+        aliases:
+          - promort-nginx
+          - promort.local
+    environment:
+      - DJANGO_SERVER=promort-web
+      - VIRTUAL_HOST=promort.local
+
+  nginx-proxy:
+    image: jwilder/nginx-proxy
+    networks:
+      promort_env:
+        aliases:
+          - nginx-proxy
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+
+volumes:
+  ome-pg-data: null
+  ome-server-var: null
+  ome-data-dir: null
+  redis-data: null
+  promort-pg-data: null
+
+networks:
+  promort_env: null
