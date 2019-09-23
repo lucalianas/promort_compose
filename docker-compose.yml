@@ -99,8 +99,7 @@ services:
       - promort-pg-data:/var/lib/postgresql/data
 
   promort-web:
-    image: crs4/promort-web:develop
-    build: ../../promort-docker/
+    image: crs4/promort-web:0.4.14
     depends_on: 
       - promort-db
     entrypoint: ['/usr/local/bin/wait-for-it.sh', 'promort-db:5432', '--',
@@ -116,8 +115,7 @@ services:
       - ./promort_config/:/opt/django/conf/
 
   promort-nginx:
-    image: crs4/promort-nginx
-    build: ../../promort-nginx-docker
+    image: crs4/promort-nginx:0.4.14
     depends_on:
       - promort-web
       - nginx-proxy
